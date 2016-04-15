@@ -1,2 +1,2 @@
 # 4chanScrapper
-Automatically collects images from a specific 4chan board based on keywords
+Automatically collects images from a specific 4chan board based on keywords and delete exact duplicates
