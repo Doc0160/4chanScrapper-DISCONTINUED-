@@ -76,7 +76,7 @@ func main(){
 							if f1.ModTime().Before(f2.ModTime()){
 								fmt.Println(f2.Name(), "duplicate removed")
 								os.Remove("./"+file.Folder+"/"+f1.Name())
-							}else if f2.ModTime().Before(f1.ModTime()){ // to be sure, but may delete this check
+							}else{
 								fmt.Println(f1.Name(), "duplicate removed")
 								os.Remove("./"+file.Folder+"/"+f2.Name())
 							}
@@ -123,6 +123,7 @@ func main(){
 								}else if err!=nil{
 									fmt.Println(err)
 								}else{
+									r.Body.Close()
 									if decoded_thread.Posts!=nil{
 										folder := func()string{
 											for k,v := range config.Keywords{
@@ -149,7 +150,6 @@ func main(){
 									}
 								}
 							}
-							r.Body.Close()
 							if thread.LastModified>new_last_update{
 								new_last_update=thread.LastModified
 							}
