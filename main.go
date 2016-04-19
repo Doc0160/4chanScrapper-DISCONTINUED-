@@ -40,8 +40,12 @@ func main(){
 				out, err := os.Create(t)
 				if err==nil{
 					resp, err := http.Get(file.Url)
-					if err==nil{
-						io.Copy(out, resp.Body)
+					if err!=nil{
+						out.Close()
+						os.Remove(t)
+					}else{
+						io.Copy(out, resp.Body)	
+						out.Close()
 						resp.Body.Close()
 						fmt.Println(file.Filename, "downloaded")
 						// check duplicates and keep the most recent one
@@ -85,7 +89,6 @@ func main(){
 							}
 						}()
 					}
-					out.Close()
 				}
 			}
 		}
