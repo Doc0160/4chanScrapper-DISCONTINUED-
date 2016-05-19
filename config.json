@@ -1,9 +1,12 @@
 {
 	"min_time_between_updates" : 10,
-	"board" : "b",
+	"port": 48879,
 	"keywords":{
 		"fluffies":[
 			"fluff"
+		],
+		"reaction":[
+			"reaction"
 		]
 	}
 }

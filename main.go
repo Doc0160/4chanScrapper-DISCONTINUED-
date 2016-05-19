@@ -4,187 +4,200 @@ import(
 	"net/http"
 	"strconv"
 	"io/ioutil"
-	"encoding/json"
+	// "encoding/json"
 	"strings"
-	"time"
+	// "time"
 	"os"
-	"io"
+	// "io"
 	"bufio"
 	"bytes"
+	// "path"
+	"net/url"
+    "html/template"
+	"github.com/gorilla/mux"
+	"sort"
 )
-func main(){
-	// load config
-	fc, err := os.Open("config.json")
-	if err != nil {
-		fmt.Println(err)
-	}
-	var config struct{
-		MinTimeBetweenUpdates int64 `json:"min_time_between_updates"`
-		Board string `json:"board"`
-		Keywords map[string][]string `json:"keywords"`
-	}
-	err = json.NewDecoder(fc).Decode(&config)
-	fc.Close()
-	if err!=nil{
-		fmt.Println(err)
-	}
-	// download every picture sent in dl chan
-	dl:=make(chan dl_struct,100)
-	go func(){
-		for true{
-			file := <-dl
-			if strings.Contains(file.Filename,"."){
-				os.MkdirAll("./"+file.Folder+"/", 0777)
-				t := "./"+file.Folder+"/"+file.Filename
-				if _, err := os.Stat(t); os.IsNotExist(err){
-					fmt.Println(file.Filename, "downloading")
-					out, err := os.Create(t)
-					if err==nil{
-						resp, err := http.Get(file.Url)
-						if err!=nil{
-							fmt.Println(err)
-							out.Close()
-							os.Remove(t)
-						}else{
-							_, err := io.Copy(out, resp.Body)	
-							out.Close()
-							resp.Body.Close()
-							if err==nil{
-								fmt.Println(file.Filename, "downloaded")
-								// check duplicates and keep the most recent one
-								go func(){
-									f1,_ := os.Stat(t)
-									files, _ := ioutil.ReadDir("./"+file.Folder)
-									for _, f2 := range files{
-										// big deep check byte per byte if necessary to determine if two files are the same
-										if f1.Name()!=f2.Name() && func()bool{
-											if f1.Size()!=f2.Size(){
-												return false
-											}
-											sf, err := os.Open("./"+file.Folder+"/"+f1.Name())
-											defer sf.Close()
-											if err != nil {
-												fmt.Println(err)
-												return false
-											}
-											df, err := os.Open("./"+file.Folder+"/"+f2.Name())
-											defer df.Close()
-											if err != nil {
-												fmt.Println(err)
-												return false
-											}
-											sscan := bufio.NewScanner(sf)
-											dscan := bufio.NewScanner(df)
-											for sscan.Scan() {
-												dscan.Scan()
-												if !bytes.Equal(sscan.Bytes(), dscan.Bytes()) {
-													return false
-												}
-											}
-											return true
-										}(){
-											if f1.ModTime().Before(f2.ModTime()){
-												fmt.Println(f2.Name(), "duplicate removed")
-												os.Remove("./"+file.Folder+"/"+f1.Name())
-											}else{
-												fmt.Println(f1.Name(), "duplicate removed")
-												os.Remove("./"+file.Folder+"/"+f2.Name())
-											}
-										}
-									}
-								}()
-							}else{ // if error on download, retry later
-								os.Remove(t)
-								dl<-file
-							}
-						}
-					}else{
-						fmt.Println(err)
-					}
-				}
+type PairList []os.FileInfo
+func (p PairList) Len() int           { return len(p) }
+func (p PairList) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
+func (p PairList) Less(i, j int) bool { return p[i].ModTime().After(p[j].ModTime()) }
+type Config struct{
+	MinTimeBetweenUpdates int64               `json:"min_time_between_updates"`
+	Port                  int                 `json:"port"`
+	Keywords              map[string][]string `json:"keywords"`
+}
+func is_it_the_right_thread(Keyword string, post Post)bool{
+	return (strings.Contains(strings.ToUpper(post.Sub), strings.ToUpper(Keyword)) || strings.Contains(strings.ToUpper(post.Com), strings.ToUpper(Keyword)))
+}
+func what_is_the_right_thread(Keywords map[string][]string, post Post)string{
+	for k,v := range Keywords{
+		for _,v2 := range v{
+			if is_it_the_right_thread(v2, post){
+				return k
 			}
 		}
-	}()
-	//
-	var real_last_update int64 = 0
-	var last_update int = 0
-	var new_last_update int = 0
-	client := &http.Client{}
-	var decoded_pages Pages
-	var decoded_thread Thread
-	//
-	for true{
-		for !(time.Now().Unix()-real_last_update>config.MinTimeBetweenUpdates){}
-		real_last_update=time.Now().Unix()
-		r, err := client.Get("https://a.4cdn.org/"+config.Board+"/threads.json")
-		if err==io.EOF{
-		}else if err!=nil{
-			fmt.Println(err)
-		}else{
-			err = json.NewDecoder(r.Body).Decode(&decoded_pages)
-			r.Body.Close()
-			if err==io.EOF{
-			}else if err!=nil{
-				fmt.Println(err)
+	}
+	return ""
+}
+// NOTE(doc): return true if names(path included) are the same
+//	false if size are different
+//	else go for a deep check et stop when at least 1 byte is different
+func compare_files(f1 os.FileInfo, f2 os.FileInfo, Folder string)bool{
+	if f1.Name()==f2.Name(){
+		return true
+	}
+	if f1.Size()!=f2.Size(){
+		return false
+	}
+	sf, err := os.Open("./"+Folder+"/"+f1.Name())
+	defer sf.Close()
+	if err != nil {
+		fmt.Println(err)
+		return false
+	}
+	df, err := os.Open("./"+Folder+"/"+f2.Name())
+	defer df.Close()
+	if err != nil {
+		fmt.Println(err)
+		return false
+	}
+	sscan := bufio.NewScanner(sf)
+	dscan := bufio.NewScanner(df)
+	for sscan.Scan() {
+		dscan.Scan()
+		if !bytes.Equal(sscan.Bytes(), dscan.Bytes()) {
+			return false
+		}
+	}
+	return true
+}
+// NOTE(doc): if duplicate found, delete the old copy
+func check_for_duplicates(t string, Folder string){
+	f1,_ := os.Stat(t)
+	files, _ := ioutil.ReadDir("./"+Folder)
+	for _, f2 := range files{
+		if f1.Name()!=f2.Name() && compare_files(f1,f2,Folder){
+			if f1.ModTime().Before(f2.ModTime()){
+				fmt.Println("\""+shorter(f2.Name(), 30)+"\"", "duplicate removed")
+				os.Remove("./"+Folder+"/"+f1.Name())
 			}else{
-				for _,page:=range decoded_pages{
-					for _, thread := range page.Threads{
-						if thread.LastModified>last_update{
-							r, err := client.Get("https://a.4cdn.org/"+config.Board+"/thread/"+strconv.Itoa(thread.No)+".json")
-							if err==io.EOF{
-							}else if err!=nil{
-								fmt.Println(err)
-							}else{
-								decoded_thread = Thread{}
-								err = json.NewDecoder(r.Body).Decode(&decoded_thread)
-								if err==io.EOF{
-								}else if err!=nil{
-									fmt.Println(err)
-								}else{
-									r.Body.Close()
-									if decoded_thread.Posts!=nil{
-										folder := func()string{
-											for k,v := range config.Keywords{
-												for _,v2 := range v{
-													if strings.Contains(strings.ToUpper(decoded_thread.Posts[0].Sub), strings.ToUpper(v2)) || strings.Contains(strings.ToUpper(decoded_thread.Posts[0].Com), strings.ToUpper(v2)){
-														return k
-													}
-												}
-											}
-											return ""
-										}()
-										if folder!=""{
-											for _, post := range decoded_thread.Posts{
-												if post.Tim!=0{
-													dl<-dl_struct{
-														strconv.Itoa(post.Tim) + "_" + post.Filename + post.Ext,
-														folder,
-														"https://i.4cdn.org/b/" + strconv.Itoa(post.Tim) + post.Ext, 
-														post.Fsize,
-													}
-												}
-											}
-										}
-									}
-								}
-							}
-							if thread.LastModified>new_last_update{
-								new_last_update=thread.LastModified
-							}
-						}
-					}
-				}
-				last_update=new_last_update
+				fmt.Println("\""+shorter(f1.Name(), 30)+"\"", "duplicate removed")
+				os.Remove("./"+Folder+"/"+f2.Name())
 			}
 		}
 	}
 }
-
-type dl_struct struct{
-	Filename string
-	Folder string
-	Url string
-	Size int
+func file_exist(t string)bool{
+	_, err := os.Stat(t)
+	return !os.IsNotExist(err)
+}
+func main(){
+	Download_queue := make(chan DownloadTask,100)
+	var fce FourChanExplorer
+	var dler Downloader
+	dler.Queue = Download_queue
+	fce.Queue = Download_queue
+	err := fce.Init()
+	if err!=nil {
+		fmt.Println(err)
+	}else{
+		// download every picture sent in dl chan
+		go dler.StartLoop()
+		go fce.StartLoop()
+		fmt.Println(fce.Config)
+		//
+		t, err := template.ParseFiles("basic.tpl");
+		if err!=nil{
+			fmt.Println(err)
+		}
+		r := mux.NewRouter()
+		r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request){
+			files, _ := ioutil.ReadDir("./")
+			type Data struct{
+				Title string
+				Body string
+				List []struct{
+					Name string
+					URL string
+				}
+			}
+			var data Data
+			data.Title ="index"
+			data.Body ="List:"
+			for _, f := range files{
+				if f.IsDir() && f.Name()[0]!='.'{
+					var l struct{
+						Name string
+						URL string
+					}
+					l.Name=f.Name()
+					l.URL="./"+url.QueryEscape(f.Name())
+					data.List=append(data.List, l)
+				}
+			}
+			err := t.ExecuteTemplate(w, "basic_list", data);
+			if err!=nil{
+				fmt.Println(err)
+			}
+		})
+		a := func(w http.ResponseWriter, r *http.Request, nb int){
+			PP:=200
+			vars := mux.Vars(r)
+			type Data struct{
+				Title string
+				Body string
+				Prev string
+				Next string
+				List []struct{
+					Name string
+					URL string
+				}
+			}
+			var data Data
+			data.Title=vars["folder"]
+			data.Body="Page "+strconv.Itoa(nb)+"\n"+vars["folder"]
+			data.Prev="./"+strconv.Itoa(nb-1)
+			data.Next="./"+strconv.Itoa(nb+1)
+			i:=0
+			j:=0
+			var files PairList
+			files, _ = ioutil.ReadDir("./"+vars["folder"]+"/")
+			sort.Sort(files)
+			for _, f := range files{
+				if !f.IsDir() && f.Name()[0]!='.' && j>=PP*(nb-1) && j<PP*nb {
+					var l struct{
+						Name string
+						URL string
+					}
+					l.Name=f.Name()
+					l.URL="/static/"+vars["folder"]+"/"+f.Name()
+					data.List=append(data.List, l)
+					i++
+				}
+				j++
+			}
+			data.Body+="("+strconv.Itoa(PP*(nb-1)+i)+"/"+strconv.Itoa(j)+"):"
+			err = t.ExecuteTemplate(w, "files", data);
+			if err!=nil{
+				fmt.Println(err)
+			}
+		}
+		r.HandleFunc("/{folder}/", func(w http.ResponseWriter, r *http.Request){
+			a(w, r, 1)
+		})
+		r.HandleFunc("/{folder}/{nb}", func(w http.ResponseWriter, r *http.Request){
+			vars := mux.Vars(r)
+			b,_:=strconv.Atoi(vars["nb"])
+			a(w, r, b)
+		})
+		for _,v := range fce.Config.Keywords{
+			for _,v2 := range v{
+				// r.PathPrefix("/static/"+v2).Handler(http.FileServer(http.Dir("./")))
+				r.PathPrefix("/static/"+v2).Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("./"))))
+			}
+		}
+		http.ListenAndServe(":"+strconv.Itoa(fce.Config.Port), r)
+	}
 }
 
 func format_o(i int)string{
@@ -207,19 +220,47 @@ type Pages []struct {
 	} `json:"threads"`
 }
 type Thread struct{
-	Posts []struct{
-		No int `json:"no"`
-		Resto int `json:"resto"`
-		Time int `json:"time"`
-		Name string `json:"name"`
-		Sub string `json:"sub"`
-		Com string `json:"com"`
-		Filename string `json:"filename"`
-		Tim int `json:"tim"`
-		Ext string `json:"ext"`
-		Fsize int `json:"fsize"`
-		Country int `json:"country"`
-		Country_name int `json:"country_name"`
-		
-	} `json:"posts"`
+	Posts []Post `json:"posts"`
+}
+type Post struct{
+	No int `json:"no"`
+	Resto int `json:"resto"`
+	Time int `json:"time"`
+	Name string `json:"name"`
+	Sub string `json:"sub"`
+	Com string `json:"com"`
+	Filename string `json:"filename"`
+	Tim int `json:"tim"`
+	Ext string `json:"ext"`
+	Fsize int `json:"fsize"`
+	Country int `json:"country"`
+	Country_name int `json:"country_name"`
+}
+func (p *Post)GetOriginalFilenameWithExt()string{
+	// NOTE(doc): go can't create files with a name>255 on windows -bug report
+	return replace(shorter(p.Filename,200)+p.Ext, ' ', '_')
+}
+func (p *Post)GetImgURL()string{
+	return "https://i.4cdn.org/b/" + p.GetFilenameWithExt()
+}
+func (p *Post)GetFilenameWithExt()string{
+	return strconv.Itoa(p.Tim)+p.Ext
+}
+func replace(s string, from byte, to byte)string{
+	var newS []byte
+	for i:=0; i<len(s); i++{
+		if(s[i]==from){
+			newS=append(newS, to)
+		}else{
+			newS=append(newS, s[i])
+		}
+	}
+	return string(newS)
+}
+func shorter(s string, i int) string {
+	if(len(s)<i){
+		return s
+	}else{
+		return s[:i-3]+"..."
+	}
 }
