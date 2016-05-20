@@ -1,12 +1,13 @@
 package main
 import(
-	"os"
+	// "os"
 	"encoding/json"
 	"net/http"
 	"time"
 	"fmt"
 	"io"
 	"strconv"
+	"net/url"
 )
 type FourChanExplorer struct{
 	Config Config
@@ -18,31 +19,8 @@ type FourChanExplorer struct{
 	Loop bool
 	Queue chan DownloadTask
 }
-func (fce *FourChanExplorer)Init()error{
-	fce.LastUpdate=0
-	fce.Loop=false
-	return fce.LoadConfig()
-}
-// NOTE(doc): check struct Config to know how to structure the json file
-func (fce *FourChanExplorer)LoadConfig()error{
-	fc, err := os.Open("config.json")
-	if err != nil {
-		if os.IsNotExist(err){
-			return err
-		}else{
-			return err
-		}
-	}
-	err = json.NewDecoder(fc).Decode(&fce.Config)
-	fc.Close()
-	if err!=nil{
-		return err
-	}
-	// return config
-	return nil
-}
-
 func (fce *FourChanExplorer)StartLoop(){
+	fce.LastUpdate=0
 	fce.Loop = true
 	var real_last_update int64 = 0
 	var new_last_update int = 0
@@ -67,46 +45,66 @@ func (fce *FourChanExplorer)StartLoop(){
 				for _,page:=range fce.Pages{
 					for _, thread := range page.Threads{
 						if thread.LastModified>fce.LastUpdate{
-							r, err := fce.Client.Get("https://a.4cdn.org/b/thread/"+strconv.Itoa(thread.No)+".json")
-							if err!=nil{
-								// TODO(doc): err, can't connect webpage
-								fmt.Println(3,err)
-							}else{
-								// NOTE(doc): reuse var, bc no explicit free in go
-								fce.Thread = Thread{}
-								err = json.NewDecoder(r.Body).Decode(&fce.Thread)
-								r.Body.Close()
-								switch(err){
-								case io.EOF: // NOTE(doc): does nothing in go, but does'nt end in default
-									// TODO(doc): WHY??? JSON---EOF ??
-								case nil:
-									if fce.Thread.Posts!=nil{
-										folder := what_is_the_right_thread(fce.Config.Keywords, fce.Thread.Posts[0])
-										if folder!=""{
-											for _, post := range fce.Thread.Posts{
-												// NOTE(doc): check if image exist in the post
-												if post.Tim!=0{
-													filename:=strconv.Itoa(post.Tim) + " - " + post.GetOriginalFilenameWithExt()
-													// NOTE(doc): checking if already downloaded
-													if !file_exist(filename){
-														fce.Queue<-DownloadTask{
-															folder+"/"+filename,
-															post.GetImgURL(),
+							var fail bool
+							for !fail{
+								fail=false
+								r, err := fce.Client.Get("https://a.4cdn.org/b/thread/"+strconv.Itoa(thread.No)+".json")
+								if err!=nil{
+									// TODO(doc): err, can't connect webpage
+									fail=true
+									fmt.Println(3,err)
+								}else{
+									// NOTE(doc): reuse var, bc no explicit free in go
+									fce.Thread = Thread{}
+									err = json.NewDecoder(r.Body).Decode(&fce.Thread)
+									r.Body.Close()
+									switch(err){
+									case io.EOF: // NOTE(doc): does nothing in go, but does'nt end in default
+										// TODO(doc): WHY??? JSON---EOF ??
+										fail=true
+									case nil:
+										if fce.Thread.Posts!=nil{
+											var folder string = ""
+											for k,v := range fce.Config.Keywords{
+												for _,v2 := range v{
+													if is_it_the_right_thread/*yet?*/(v2, fce.Thread.Posts[0]){
+														//return k //YEEES!!!
+														folder=k
+														break
+													}
+													// NO è_é
+												}
+											}
+											// return "" // 'K bye 
+											//folder := what_is_the_right_thread(fce.Config.Keywords, fce.Thread.Posts[0])
+											if folder!=""{
+												for _, post := range fce.Thread.Posts{
+													// NOTE(doc): check if image exist in the post
+													if post.Tim!=0{
+														filename:=strconv.Itoa(post.Tim) + " - " + post.GetOriginalFilenameWithExt()
+														// NOTE(doc): checking if already downloaded
+														if !file_exist(filename){
+															fce.Queue<-DownloadTask{
+																folder+"/"+filename,
+																post.GetImgURL(),
+															}
 														}
 													}
 												}
 											}
+										}else{
+											// TODO(doc): retry
+											fail=true
 										}
-									}else{
-										// TODO(doc): retry
+									default:
+										fail=true
+										// TODO(doc): err, can't decode
+										fmt.Println(4,err)
 									}
-								default:
-									// TODO(doc): err, can't decode
-									fmt.Println(4,err)
 								}
-							}
-							if thread.LastModified>new_last_update{
-								new_last_update=thread.LastModified
+								if thread.LastModified>new_last_update{
+									new_last_update=thread.LastModified
+								}
 							}
 						}
 					}
@@ -115,4 +113,42 @@ func (fce *FourChanExplorer)StartLoop(){
 			}
 		}
 	}
+}
+// https://github.com/4chan/4chan-API
+type Pages []struct {
+	Page int `json:"page"`
+	Threads []struct {
+		No int `json:"no"`
+		LastModified int `json:"last_modified"`
+	} `json:"threads"`
+}
+type Thread struct{
+	Posts []Post `json:"posts"`
+}
+type Post struct{
+	No int `json:"no"`
+	Resto int `json:"resto"`
+	Time int `json:"time"`
+	Name string `json:"name"`
+	Sub string `json:"sub"`
+	Com string `json:"com"`
+	Filename string `json:"filename"`
+	Tim int `json:"tim"`
+	Ext string `json:"ext"`
+	Fsize int `json:"fsize"`
+	Country int `json:"country"`
+	Country_name int `json:"country_name"`
+}
+func (p *Post)GetOriginalFilenameWithExt()string{
+	// NOTE(doc): go can't create files with a name>255 on windows -bug report
+	p.Filename, _ = url.QueryUnescape(p.Filename)
+	p.Filename=misc.Shortener(p.Filename,200)
+	p.Filename = misc.CorrectName(p.Filename)
+	return misc.Replace(p.Filename+p.Ext, ' ', '_')
+}
+func (p *Post)GetImgURL()string{
+	return "https://i.4cdn.org/b/" + p.GetFilenameWithExt()
+}
+func (p *Post)GetFilenameWithExt()string{
+	return strconv.Itoa(p.Tim)+p.Ext
 }

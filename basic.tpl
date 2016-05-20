@@ -18,8 +18,8 @@
 	<head>
 		<meta charset="utf-8">
 		<title>{{.Title}}</title>
-		<link rel="stylesheet" href="style.css">
-		<script src="script.js"></script>
+		<link rel="stylesheet" href="/static/style.css">
+		<script src="/static/script.js"></script>
 	</head>
 	<body>
 		{{.Body}}
@@ -37,8 +37,8 @@
 	<head>
 		<meta charset="utf-8">
 		<title>{{.Title}}</title>
-		<link rel="stylesheet" href="style.css">
-		<script src="script.js"></script>
+		<link rel="stylesheet" href="/static/style.css">
+		<script src="/static/script.js"></script>
 	</head>
 	<body>
 		{{.Body}}

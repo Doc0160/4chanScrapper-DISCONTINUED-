@@ -33,15 +33,15 @@ func (dl*Downloader)StartLoop(){
 				if err==nil{
 					resp, err := dl.Client.Get(file.URL)
 					if err==nil{
-						fmt.Println("\""+shorter(path.Base(file.Filename), 30)+"\" downloading")
+						fmt.Println("\""+path.Base(file.Filename)+"\" downloading")
 						_, err := io.Copy(out, resp.Body)	
 						if err==nil{
 							out.Close()
 							resp.Body.Close()
-							fmt.Println("\""+shorter(path.Base(file.Filename), 30)+"\" downloaded")
+							fmt.Println("\""+path.Base(file.Filename)+"\" downloaded")
 							go check_for_duplicates(t, path.Dir(file.Filename))
 						}else{
-							fmt.Println("\""+shorter(path.Base(file.Filename), 30)+"\" download fail")
+							fmt.Println("\""+path.Base(file.Filename)+"\" download fail")
 							println(err.Error())
 							// NOTE(doc): the main loop will retry automaticly 
 							//	if the filename is not found
