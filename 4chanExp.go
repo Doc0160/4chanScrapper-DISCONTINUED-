@@ -26,9 +26,9 @@ func (fce *FourChanExplorer)StartLoop(){
 	var new_last_update int = 0
 	for fce.Loop{
 		// SIDENOTE(doc): LIBERTAD DEL PROCO
-		if !(time.Now().Unix()-real_last_update>fce.Config.MinTimeBetweenUpdates){
-			time.Sleep(time.Duration((fce.Config.MinTimeBetweenUpdates-(time.Now().Unix()-real_last_update)))*time.Second)
-		}
+		//if !(time.Now().Unix()-real_last_update>fce.Config.MinTimeBetweenUpdates){
+			time.Sleep(fce.Config.MinTimeBetweenUpdates*time.Second)
+		//}
 		real_last_update=time.Now().Unix()
 		r, err := fce.Client.Get("https://a.4cdn.org/b/threads.json")
 		if err!=nil{
