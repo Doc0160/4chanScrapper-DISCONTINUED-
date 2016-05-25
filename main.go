@@ -112,6 +112,7 @@ func main(){
 		go dler.StartLoop()
 		go fce.StartLoop()
 		http_serve(&fce.Config)
+		print("r")
 	}else{
 		fmt.Println(err)
 	}

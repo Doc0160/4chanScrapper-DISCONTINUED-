@@ -102,5 +102,6 @@ func http_serve(config *Config){
 			r.PathPrefix("/static/"+v2).Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("./"))))
 		}
 	}
-	http.ListenAndServe(":"+strconv.Itoa(config.Port), r)
+	err = http.ListenAndServe(":"+strconv.Itoa(config.Port), r)
+	fmt.Println(err)
 }

@@ -48,6 +48,7 @@ func (dl*Downloader)StartLoop(){
 							os.Remove(t)
 						}
 					}else{
+						os.Remove(t)
 						println("dl1 "+err.Error())
 					}
 				}else{

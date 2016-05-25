@@ -7,7 +7,7 @@ import(
 	"fmt"
 	"io"
 	"strconv"
-	"net/url"
+	// "net/url"
 )
 type FourChanExplorer struct{
 	Config Config
@@ -140,10 +140,10 @@ type Post struct{
 	Country_name int `json:"country_name"`
 }
 func (p *Post)GetOriginalFilenameWithExt()string{
-	// NOTE(doc): go can't create files with a name>255 on windows -bug report
-	p.Filename, _ = url.QueryUnescape(p.Filename)
-	p.Filename=misc.Shortener(p.Filename,200)
+	//p.Filename, err = url.QueryUnescape(p.Filename)
 	p.Filename = misc.CorrectName(p.Filename)
+	// NOTE(doc): go can't create files with a name>255 on windows -bug report
+	p.Filename = misc.Shortener(p.Filename,200)
 	return misc.Replace(p.Filename+p.Ext, ' ', '_')
 }
 func (p *Post)GetImgURL()string{
