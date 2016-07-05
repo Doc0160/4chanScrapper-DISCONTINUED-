@@ -16,7 +16,7 @@ import(
 )
 func log(t string){
 	print("[")
-	print(time.Now().Unix())
+	print(time.Now().UnixNano())
 	print("] ")
 	print(t)
 	print(" ")
@@ -54,25 +54,27 @@ func checkDuplicates(t string, Folder string){
 	for _, f2 := range files{
 		// big deep check byte per byte if necessary to determine if two files are the same
 		if f1.Name()!=f2.Name() && isSameFile(f1, f2, Folder) {
+			var f string
 			if f1.ModTime().Before(f2.ModTime()){
-				log(f2.Name() + " duplicate removed")
-				os.Remove("./"+Folder+"/"+f1.Name())
+				f = f2.Name()
 			}else{
-				log(f1.Name() + " duplicate removed")
-				os.Remove("./"+Folder+"/"+f2.Name())
+				f = f1.Name()
 			}
+			log(f + " duplicate removed")
+			os.Remove("./"+Folder+"/"+f)
 		}
 	}
 }
-func download(url string, filename string)error{
+func download(filename string, url string, Folder string)error{
 	resp, err := http.Get(url)
-	defer resp.Body.Close()
 	if err==nil{
+		defer resp.Body.Close()
 		out, err := os.Create(filename)
-		defer out.Close()
 		if err==nil{
+			defer out.Close()
 			_, err := io.Copy(out, resp.Body)
 			if err==nil{
+				checkDuplicates(filename, Folder)
 				return nil
 			}else{
 				defer os.Remove(filename)
@@ -87,6 +89,7 @@ func download(url string, filename string)error{
 	}
 }
 func download_loop(dl chan dl_struct){
+	debug.SetGCPercent(500)
 	runtime.LockOSThread()
 	var err error
 	var file dl_struct
@@ -97,53 +100,39 @@ func download_loop(dl chan dl_struct){
 		if strings.Contains(file.Filename,"."){
 			if _, err = os.Stat(t); os.IsNotExist(err) {
 				log(file.Filename + " downloading")
-				out, err := os.Create(t)
+				err := download(t, file.Url, file.Folder)
 				if err==nil{
-					resp, err := http.Get(file.Url)
-					if err!=nil{
-						log(err.Error())
-						out.Close()
-						os.Remove(t)
-					}else{
-						_, err := io.Copy(out, resp.Body)	
-						out.Close()
-						resp.Body.Close()
-						if err==nil{
-							log(file.Filename + " downloaded")
-							// check duplicates and keep the most recent one
-							checkDuplicates(t, file.Folder)
-						}else{
-							os.Remove(t)
-						}
-					}
+					log(file.Filename + " downloaded")
 				}else{
-					os.Remove(t)
-					log(err.Error())
+					log(file.Filename + err.Error())
 				}
 			}
 		}
 	}
 	runtime.UnlockOSThread()
 }
-func checkConfig(config *Config, file string)bool{
+func checkConfig(config *Config, file string)error{
 	t, err := os.Stat(file)
 	if err != nil {
 		log(err.Error())
+		return err
 	}
 	if t.ModTime().After(config.LastModified) {
 		fc, err := os.Open(file)
 		if err != nil {
 			log(err.Error())
+			return err
 		}
 		err = json.NewDecoder(fc).Decode(config)
 		fc.Close()
 		if err!=nil{
 			log(err.Error())
+			return err
 		}
 		config.LastModified = t.ModTime()
-		return true
+		return nil
 	}
-	return false
+	return nil
 }
 func checkKeywords(config *Config, decoded_thread Thread)string{
 	for k,v := range config.Keywords{
@@ -166,18 +155,19 @@ func main(){
 	var last_update int = 0
 	var new_last_update int = 0
 	client := &http.Client{
-		Timeout : 10,
+		Timeout : 10 * time.Second,
 	}
 	var decoded_pages Pages
 	var decoded_thread Thread
+	threads_req, _ := http.NewRequest("GET", "https://a.4cdn.org/b/threads.json", nil)
 	//
 	for {
 		// load config
-		if checkConfig(&config, "config.json"){
+		if err := checkConfig(&config, "config.json"); err == nil{
 			fmt.Println(config)
 		}
 		real_last_update=time.Now().Unix()
-		r, err := client.Get("https://a.4cdn.org/b/threads.json")
+		r, err := client.Do(threads_req)
 		if err==io.EOF{
 		}else if err!=nil{
 			log(err.Error())
@@ -189,8 +179,8 @@ func main(){
 				log(err.Error())
 			}else{
 				for _,page:=range decoded_pages{
-					for _, thread := range page.Threads{
-						if thread.LastModified>last_update{
+					for _, thread := range page.Threads {
+						if thread.LastModified>last_update {
 							r, err := client.Get("https://a.4cdn.org/b/thread/"+strconv.Itoa(thread.No)+".json")
 							if err==io.EOF{
 							}else if err!=nil{
@@ -198,16 +188,16 @@ func main(){
 							}else{
 								decoded_thread = Thread{}
 								err = json.NewDecoder(r.Body).Decode(&decoded_thread)
-								if err==io.EOF{
-								}else if err!=nil{
+								if err==io.EOF {
+								}else if err!=nil {
 									log(err.Error())
 								}else{
 									r.Body.Close()
-									if decoded_thread.Posts!=nil{
+									if decoded_thread.Posts!=nil {
 										folder := checkKeywords(&config, decoded_thread);
-										if folder!=""{
-											for _, post := range decoded_thread.Posts{
-												if post.Tim!=0{
+										if folder!="" {
+											for _, post := range decoded_thread.Posts {
+												if post.Tim!=0 {
 													dl<-dl_struct{
 														strconv.Itoa(post.Tim) + post.Ext,
 														folder,
@@ -238,16 +228,18 @@ type dl_struct struct{
 	Url string
 	Size int
 }
-type Config struct{
+type Config struct {
 	LastModified time.Time
 	MinTimeBetweenUpdates int64 `json:"min_time_between_updates"`
 	Keywords map[string][]string `json:"keywords"`
 }
-func pause(durationS int64){
+func pause(durationS int64) {
 	time.Sleep(time.Duration(durationS) * time.Second)
 }
-func format_o(i int)string{
+func format_o(i int)string {
 	switch{
+		case i>1024*1024*1024*1024:
+		return strconv.Itoa(i/(1024*1024*1024*1024))+"To"
 		case i>1024*1024*1024:
 		return strconv.Itoa(i/(1024*1024*1024))+"Go"
 		case i>1024*1024:
@@ -268,7 +260,6 @@ type Pages []struct {
 type Thread struct{
 	Posts []struct{
 		No int `json:"no"`
-		Resto int `json:"resto"`
 		Time int `json:"time"`
 		Name string `json:"name"`
 		Sub string `json:"sub"`
@@ -277,7 +268,5 @@ type Thread struct{
 		Tim int `json:"tim"`
 		Ext string `json:"ext"`
 		Fsize int `json:"fsize"`
-		Country int `json:"country"`
-		Country_name int `json:"country_name"`
 	} `json:"posts"`
 }
