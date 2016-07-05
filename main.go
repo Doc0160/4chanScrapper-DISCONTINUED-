@@ -13,6 +13,47 @@ import(
 	"bytes"
 	"runtime"
 )
+func checkDuplicates(f1 os.FileInfo, Folder string){
+	// f1,_ := os.Stat(t)
+	files, _ := ioutil.ReadDir("./"+Folder)
+	for _, f2 := range files{
+		// big deep check byte per byte if necessary to determine if two files are the same
+		if f1.Name()!=f2.Name() && func()bool{
+			if f1.Size()!=f2.Size(){
+				return false
+			}
+			sf, err := os.Open("./"+Folder+"/"+f1.Name())
+			defer sf.Close()
+			if err != nil {
+				println(err.Error)
+				return false
+			}
+			df, err := os.Open("./"+Folder+"/"+f2.Name())
+			defer df.Close()
+			if err != nil {
+				println(err.Error)
+				return false
+			}
+			sscan := bufio.NewScanner(sf)
+			dscan := bufio.NewScanner(df)
+			for sscan.Scan() {
+				dscan.Scan()
+				if !bytes.Equal(sscan.Bytes(), dscan.Bytes()) {
+					return false
+				}
+			}
+			return true
+		}(){
+			if f1.ModTime().Before(f2.ModTime()){
+				fmt.Println(f2.Name(), "duplicate removed")
+				os.Remove("./"+Folder+"/"+f1.Name())
+			}else{
+				fmt.Println(f1.Name(), "duplicate removed")
+				os.Remove("./"+Folder+"/"+f2.Name())
+			}
+		}
+	}
+}
 func download(dl chan dl_struct){
 	runtime.LockOSThread()
 	for {
@@ -36,47 +77,8 @@ func download(dl chan dl_struct){
 						if err==nil{
 							fmt.Println(file.Filename, "downloaded")
 							// check duplicates and keep the most recent one
-							go func(){
-								f1,_ := os.Stat(t)
-								files, _ := ioutil.ReadDir("./"+file.Folder)
-								for _, f2 := range files{
-									// big deep check byte per byte if necessary to determine if two files are the same
-									if f1.Name()!=f2.Name() && func()bool{
-										if f1.Size()!=f2.Size(){
-											return false
-										}
-										sf, err := os.Open("./"+file.Folder+"/"+f1.Name())
-										defer sf.Close()
-										if err != nil {
-											println(err.Error)
-											return false
-										}
-										df, err := os.Open("./"+file.Folder+"/"+f2.Name())
-										defer df.Close()
-										if err != nil {
-											println(err.Error)
-											return false
-										}
-										sscan := bufio.NewScanner(sf)
-										dscan := bufio.NewScanner(df)
-										for sscan.Scan() {
-											dscan.Scan()
-											if !bytes.Equal(sscan.Bytes(), dscan.Bytes()) {
-												return false
-											}
-										}
-										return true
-									}(){
-										if f1.ModTime().Before(f2.ModTime()){
-											fmt.Println(f2.Name(), "duplicate removed")
-											os.Remove("./"+file.Folder+"/"+f1.Name())
-										}else{
-											fmt.Println(f1.Name(), "duplicate removed")
-											os.Remove("./"+file.Folder+"/"+f2.Name())
-										}
-									}
-								}
-							}()
+							f1,_ := os.Stat(t)
+							checkDuplicates(f1, file.Folder)
 						}else{
 							os.Remove(t)
 						}
@@ -89,15 +91,15 @@ func download(dl chan dl_struct){
 	}
 	runtime.UnlockOSThread()
 }
+func checkConfig(c *Config){
+	
+}
 func main(){
+	var config Config
 	// load config
 	fc, err := os.Open("config.json")
 	if err != nil {
 		println(err.Error)
-	}
-	var config struct{
-		MinTimeBetweenUpdates int64 `json:"min_time_between_updates"`
-		Keywords map[string][]string `json:"keywords"`
 	}
 	err = json.NewDecoder(fc).Decode(&config)
 	fc.Close()
@@ -116,8 +118,9 @@ func main(){
 	var decoded_thread Thread
 	//
 	for true{
-		// time.Sleep( time.Duration( (time.Now().Unix() - real_last_update) - config.MinTimeBetweenUpdates) * time.Second)
-		for !(time.Now().Unix()-real_last_update>config.MinTimeBetweenUpdates){}
+		pause(config.MinTimeBetweenUpdates - (time.Now().Unix() - real_last_update))
+		// time.Sleep(time.Duration(config.MinTimeBetweenUpdates - (time.Now().Unix() - real_last_update)) * time.Second)
+		// for !(time.Now().Unix()-real_last_update>config.MinTimeBetweenUpdates){}
 		real_last_update=time.Now().Unix()
 		r, err := client.Get("https://a.4cdn.org/b/threads.json")
 		if err==io.EOF{
@@ -182,14 +185,20 @@ func main(){
 		}
 	}
 }
-
 type dl_struct struct{
 	Filename string
 	Folder string
 	Url string
 	Size int
 }
-
+type Config struct{
+	MinTimeBetweenUpdates int64 `json:"min_time_between_updates"`
+	Keywords map[string][]string `json:"keywords"`
+}
+func pause(durationS int64){
+	time.Sleep(time.Duration(durationS) * time.Second)
+	// for !(durationS>config.MinTimeBetweenUpdates){}
+}
 func format_o(i int)string{
 	switch{
 		case i>1073741824:
