@@ -1,6 +1,5 @@
 {
 	"min_time_between_updates" : 10,
-	"port": 48879,
 	"keywords":{
 		"fluffies":[
 			"fluff"
