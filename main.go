@@ -13,6 +13,8 @@ import(
 	"bytes"
 	"runtime"
 	"runtime/debug"
+	"errors"
+	"sync"
 )
 func log(t string){
 	print("[")
@@ -54,14 +56,13 @@ func checkDuplicates(t string, Folder string){
 	for _, f2 := range files{
 		// big deep check byte per byte if necessary to determine if two files are the same
 		if f1.Name()!=f2.Name() && isSameFile(f1, f2, Folder) {
-			var f string
-			if f1.ModTime().Before(f2.ModTime()){
-				f = f2.Name()
-			}else{
-				f = f1.Name()
-			}
-			log(f + " duplicate removed")
-			os.Remove("./"+Folder+"/"+f)
+			if f1.ModTime().Before(f2.ModTime()) {
+				log(f2.Name() + " duplicate removed")
+ 				os.Remove("./"+Folder+"/"+f1.Name())
+ 			}else{
+				log(f1.Name() + " duplicate removed")
+ 				os.Remove("./"+Folder+"/"+f2.Name())
+ 			}
 		}
 	}
 }
@@ -102,9 +103,9 @@ func download_loop(dl chan dl_struct){
 				log(file.Filename + " downloading")
 				err := download(t, file.Url, file.Folder)
 				if err==nil{
-					log(file.Filename + " downloaded")
+					log(file.Filename + " downloaded " + format_o(file.Size))
 				}else{
-					log(file.Filename + err.Error())
+					log(file.Filename + " " + err.Error())
 				}
 			}
 		}
@@ -132,7 +133,7 @@ func checkConfig(config *Config, file string)error{
 		config.LastModified = t.ModTime()
 		return nil
 	}
-	return nil
+	return errors.New("")
 }
 func checkKeywords(config *Config, decoded_thread Thread)string{
 	for k,v := range config.Keywords{
@@ -143,6 +144,38 @@ func checkKeywords(config *Config, decoded_thread Thread)string{
 		}
 	}
 	return ""
+}
+func doThread(wg *sync.WaitGroup, threadURL string, dl chan dl_struct, config Config){
+	defer wg.Done()
+	r, err := http.Get(threadURL)
+	if err==io.EOF{
+	}else if err!=nil{
+		log(err.Error())
+	}else{
+		decoded_thread := Thread{}
+		err = json.NewDecoder(r.Body).Decode(&decoded_thread)
+		if err==io.EOF {
+		}else if err!=nil {
+			log(err.Error())
+		}else{
+			r.Body.Close()
+			if decoded_thread.Posts!=nil {
+				folder := checkKeywords(&config, decoded_thread);
+				if folder!="" {
+					for _, post := range decoded_thread.Posts {
+						if post.Tim!=0 {
+							dl<-dl_struct{
+								strconv.Itoa(post.Tim) + post.Ext,
+								folder,
+								"https://i.4cdn.org/b/" + strconv.Itoa(post.Tim) + post.Ext, 
+								post.Fsize,
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 }
 func main(){
 	debug.SetGCPercent(500)
@@ -158,8 +191,9 @@ func main(){
 		Timeout : 10 * time.Second,
 	}
 	var decoded_pages Pages
-	var decoded_thread Thread
+	// var decoded_thread Thread
 	threads_req, _ := http.NewRequest("GET", "https://a.4cdn.org/b/threads.json", nil)
+	var wg sync.WaitGroup
 	//
 	for {
 		// load config
@@ -178,47 +212,22 @@ func main(){
 			}else if err!=nil{
 				log(err.Error())
 			}else{
-				for _,page:=range decoded_pages{
+				for _,page := range decoded_pages{
 					for _, thread := range page.Threads {
 						if thread.LastModified>last_update {
-							r, err := client.Get("https://a.4cdn.org/b/thread/"+strconv.Itoa(thread.No)+".json")
-							if err==io.EOF{
-							}else if err!=nil{
-								log(err.Error())
-							}else{
-								decoded_thread = Thread{}
-								err = json.NewDecoder(r.Body).Decode(&decoded_thread)
-								if err==io.EOF {
-								}else if err!=nil {
-									log(err.Error())
-								}else{
-									r.Body.Close()
-									if decoded_thread.Posts!=nil {
-										folder := checkKeywords(&config, decoded_thread);
-										if folder!="" {
-											for _, post := range decoded_thread.Posts {
-												if post.Tim!=0 {
-													dl<-dl_struct{
-														strconv.Itoa(post.Tim) + post.Ext,
-														folder,
-														"https://i.4cdn.org/b/" + strconv.Itoa(post.Tim) + post.Ext, 
-														post.Fsize,
-													}
-												}
-											}
-										}
-									}
-								}
-							}
+							wg.Add(1)
+							doThread(&wg, "https://a.4cdn.org/b/thread/"+strconv.Itoa(thread.No)+".json", dl, config)
 							if thread.LastModified>new_last_update{
 								new_last_update=thread.LastModified
 							}
 						}
 					}
 				}
+				wg.Wait()
 				last_update=new_last_update
 			}
 		}
+		log("Check took " + strconv.Itoa(int(time.Now().Unix() - real_last_update)) + "s")
 		pause(config.MinTimeBetweenUpdates - (time.Now().Unix() - real_last_update))
 	}
 }
