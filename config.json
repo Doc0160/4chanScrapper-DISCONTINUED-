@@ -1,5 +1,5 @@
 {
-	"min_time_between_updates" : 10,
+	"min_time_between_updates" : 5,
 	"keywords":{
 		"fluffies":[
 			"fluff"
