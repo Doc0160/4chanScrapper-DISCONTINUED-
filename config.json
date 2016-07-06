@@ -1,5 +1,6 @@
 {
 	"min_time_between_updates" : 5,
+	"timeout" : 7,
 	"keywords":{
 		"fluffies":[
 			"fluff"

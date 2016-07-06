@@ -9,7 +9,6 @@ import(
 	"time"
 	"os"
 	"io"
-	"bufio"
 	"bytes"
 	"runtime"
 	"runtime/debug"
@@ -24,69 +23,94 @@ func log(t string){
 	print(" ")
 	println()
 }
-func isSameFile(f1 os.FileInfo, f2 os.FileInfo, Folder string)bool{
-	if f1.Size()!=f2.Size(){
-		return false
-	}
-	sf, err := os.Open("./"+Folder+"/"+f1.Name())
-	defer sf.Close()
-	if err != nil {
-		log(err.Error())
-		return false
-	}
-	df, err := os.Open("./"+Folder+"/"+f2.Name())
-	defer df.Close()
-	if err != nil {
-		log(err.Error())
-		return false
-	}
-	sscan := bufio.NewScanner(sf)
-	dscan := bufio.NewScanner(df)
-	for sscan.Scan() {
-		dscan.Scan()
-		if !bytes.Equal(sscan.Bytes(), dscan.Bytes()) {
-			return false
+func fileContentsComparison(a, b io.Reader) (bool, error) {
+	bufferSize := os.Getpagesize()
+	ba := make([]byte, bufferSize)
+	bb := make([]byte, bufferSize)
+	for {
+		la, erra := a.Read(ba)
+		lb, errb := b.Read(bb)
+		if la > 0 || lb > 0 {
+			if !bytes.Equal(ba, bb) {
+				return false, nil
+			}
+		}
+		switch {
+		case erra == io.EOF && errb == io.EOF:
+			return true, nil
+		case erra != nil && errb != nil:
+			return false, errors.New(erra.Error() + " " + errb.Error())
+		case erra != nil:
+			return false, erra
+		case errb != nil:
+			return false, errb
 		}
 	}
-	return true
+}
+func isSameFile(f1 os.FileInfo, f2 os.FileInfo, Folder string) (bool, error) {
+	if f1.Size()!=f2.Size(){
+		return false, nil
+	}
+	a, erra := os.Open("./"+Folder+"/"+f1.Name())
+	b, errb := os.Open("./"+Folder+"/"+f2.Name())
+	if erra != nil {
+		return false, erra
+	}
+	if errb != nil {
+		return false, errb
+	}
+	r, err := fileContentsComparison(a, b)
+	a.Close()
+	b.Close()
+	return r, err
 }
 func checkDuplicates(t string, Folder string){
 	f1,_ := os.Stat(t)
 	files, _ := ioutil.ReadDir("./"+Folder)
 	for _, f2 := range files{
-		// big deep check byte per byte if necessary to determine if two files are the same
-		if f1.Name()!=f2.Name() && isSameFile(f1, f2, Folder) {
-			if f1.ModTime().Before(f2.ModTime()) {
-				log(f2.Name() + " duplicate removed")
- 				os.Remove("./"+Folder+"/"+f1.Name())
- 			}else{
-				log(f1.Name() + " duplicate removed")
- 				os.Remove("./"+Folder+"/"+f2.Name())
- 			}
+		if f1.Name()!=f2.Name(){
+			r, err := isSameFile(f1, f2, Folder)
+			if !r {
+				if err != nil {
+					log(f1.Name() + " " + f2.Name() + " " + err.Error())
+				}
+			} else {
+				if f1.ModTime().Before(f2.ModTime()) {
+					log(f2.Name() + " duplicate removed")
+					os.Remove("./"+Folder+"/"+f1.Name())
+				}else{
+					log(f1.Name() + " duplicate removed")
+					os.Remove("./"+Folder+"/"+f2.Name())
+				}
+			}
 		}
 	}
 }
 func download(filename string, url string, Folder string)error{
-	resp, err := http.Get(url)
-	if err==nil{
-		defer resp.Body.Close()
-		out, err := os.Create(filename)
+	Client := &http.Client{}
+	resp, errhttp := Client.Get(url)
+	out, errf := os.Create(filename)
+	if errhttp==nil && errf==nil{
+		_, err := io.Copy(out, resp.Body)
+		out.Close()
+		resp.Body.Close()
 		if err==nil{
-			defer out.Close()
-			_, err := io.Copy(out, resp.Body)
-			if err==nil{
-				checkDuplicates(filename, Folder)
-				return nil
-			}else{
-				defer os.Remove(filename)
-				return err
-			}
+			checkDuplicates(filename, Folder)
+			return nil
 		}else{
-			defer os.Remove(filename)
+			os.Remove(filename)
 			return err
 		}
 	}else{
-		return err
+		switch {
+		case errhttp != nil && errf != nil:
+			return errors.New(errhttp.Error() + " " + errf.Error())
+		case errhttp != nil:
+			return errhttp
+		case errf != nil:
+			return errf
+		}
+		return errors.New("ukn")
 	}
 }
 func download_loop(dl chan dl_struct){
@@ -112,35 +136,46 @@ func download_loop(dl chan dl_struct){
 	}
 	runtime.UnlockOSThread()
 }
-func checkConfig(config *Config, file string)error{
+func checkConfig(config *Config, file string) (bool, error) {
 	t, err := os.Stat(file)
 	if err != nil {
-		log(err.Error())
-		return err
+		return false, err
 	}
 	if t.ModTime().After(config.LastModified) {
 		fc, err := os.Open(file)
 		if err != nil {
-			log(err.Error())
-			return err
+			return false, err
 		}
 		err = json.NewDecoder(fc).Decode(config)
 		fc.Close()
 		if err!=nil{
-			log(err.Error())
-			return err
+			return false, err
+		}
+		http.DefaultClient = &http.Client{
+			Timeout : config.Timeout * time.Second,
+		}
+		config.ParsedKeywords = nil
+		config.ParsedKeywords = make(map[string]string)
+		for k,v := range config.Keywords{
+			for _,v2 := range v{
+				config.ParsedKeywords[v2] = k
+			}
+		}
+		if config.MinTimeBetweenUpdates == 0 {
+			config.MinTimeBetweenUpdates = 10
+		}
+		if config.Timeout == 0 {
+			config.Timeout = 10
 		}
 		config.LastModified = t.ModTime()
-		return nil
+		return true, nil
 	}
-	return errors.New("")
+	return false, nil
 }
 func checkKeywords(config *Config, decoded_thread Thread)string{
-	for k,v := range config.Keywords{
-		for _,v2 := range v{
-			if strings.Contains(strings.ToUpper(decoded_thread.Posts[0].Sub), strings.ToUpper(v2)) || strings.Contains(strings.ToUpper(decoded_thread.Posts[0].Com), strings.ToUpper(v2)){
-				return k
-			}
+	for v2, k := range config.ParsedKeywords {
+		if strings.Contains(strings.ToUpper(decoded_thread.Posts[0].Sub), strings.ToUpper(v2)) || strings.Contains(strings.ToUpper(decoded_thread.Posts[0].Com), strings.ToUpper(v2)){
+			return k
 		}
 	}
 	return ""
@@ -165,10 +200,10 @@ func doThread(wg *sync.WaitGroup, threadURL string, dl chan dl_struct, config Co
 					for _, post := range decoded_thread.Posts {
 						if post.Tim!=0 {
 							dl<-dl_struct{
-								strconv.Itoa(post.Tim) + post.Ext,
-								folder,
-								"https://i.4cdn.org/b/" + strconv.Itoa(post.Tim) + post.Ext, 
-								post.Fsize,
+								Filename: strconv.Itoa(post.Tim) + "_" + post.Filename + post.Ext,
+								Folder: folder,
+								Url: "https://i.4cdn.org/b/" + strconv.Itoa(post.Tim) + post.Ext, 
+								Size: post.Fsize,
 							}
 						}
 					}
@@ -183,25 +218,28 @@ func main(){
 	// download every picture sent in dl chan
 	dl:=make(chan dl_struct,100)
 	go download_loop(dl)
+	go download_loop(dl)
 	//
 	var real_last_update int64 = 0
 	var last_update int = 0
 	var new_last_update int = 0
-	client := &http.Client{
-		Timeout : 10 * time.Second,
-	}
 	var decoded_pages Pages
-	// var decoded_thread Thread
 	threads_req, _ := http.NewRequest("GET", "https://a.4cdn.org/b/threads.json", nil)
 	var wg sync.WaitGroup
 	//
 	for {
 		// load config
-		if err := checkConfig(&config, "config.json"); err == nil{
+		ok, err := checkConfig(&config, "config.json")
+		if ok {
+			log("New config")
+			println("\tTimeout: " + strconv.Itoa(int(config.Timeout)) + "s")
+			println("\tMinimum time between updates: " + strconv.Itoa(int(config.MinTimeBetweenUpdates)) + "s")
 			fmt.Println(config)
+		} else if err != nil {
+			log(err.Error())
 		}
 		real_last_update=time.Now().Unix()
-		r, err := client.Do(threads_req)
+		r, err := http.DefaultClient.Do(threads_req)
 		if err==io.EOF{
 		}else if err!=nil{
 			log(err.Error())
@@ -239,7 +277,10 @@ type dl_struct struct{
 }
 type Config struct {
 	LastModified time.Time
+	ParsedKeywords map[string]string
+	//
 	MinTimeBetweenUpdates int64 `json:"min_time_between_updates"`
+	Timeout time.Duration `json:"timeout"`
 	Keywords map[string][]string `json:"keywords"`
 }
 func pause(durationS int64) {
@@ -277,5 +318,6 @@ type Thread struct{
 		Tim int `json:"tim"`
 		Ext string `json:"ext"`
 		Fsize int `json:"fsize"`
+		MD5 string `json:"md5"`
 	} `json:"posts"`
 }
