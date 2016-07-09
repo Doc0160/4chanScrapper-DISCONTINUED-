@@ -1,6 +1,8 @@
 {
-	"min_time_between_updates" : 10,
+	"log" : false,
+	"min_time_between_updates" : 30,
 	"timeout" : 10,
+	"download_retries" : 10,
 	"keywords":{
 		"fluffies":[
 			"fluff"

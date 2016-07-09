@@ -15,14 +15,6 @@ import(
 	"errors"
 	"sync"
 )
-func log(t string){
-	print("[")
-	print(time.Now().UnixNano())
-	print("] ")
-	print(t)
-	print(" ")
-	println()
-}
 func fileContentsComparison(a, b io.Reader) (bool, error) {
 	bufferSize := os.Getpagesize()
 	ba := make([]byte, bufferSize)
@@ -53,37 +45,41 @@ func isSameFile(f1 os.FileInfo, f2 os.FileInfo, Folder string) (bool, error) {
 	}
 	a, erra := os.Open("./"+Folder+"/"+f1.Name())
 	b, errb := os.Open("./"+Folder+"/"+f2.Name())
-	defer a.Close()
-	defer b.Close()
 	switch {
 	case erra == io.EOF && errb == io.EOF:
+		a.Close()
+		b.Close()
 		return true, nil
 	case erra != nil && errb != nil:
 		return false, errors.New(erra.Error() + " " + errb.Error())
 	case erra != nil:
+		b.Close()
 		return false, erra
 	case errb != nil:
+		a.Close()
 		return false, errb
 	}
 	r, err := fileContentsComparison(a, b)
+	a.Close()
+	b.Close()
 	return r, err
 }
 func checkDuplicates(t string, Folder string){
 	f1,_ := os.Stat(t)
 	files, _ := ioutil.ReadDir("./"+Folder)
 	for _, f2 := range files{
-		if f1.Name()!=f2.Name() {
+		if f1.Name() != f2.Name() {
 			r, err := isSameFile(f1, f2, Folder)
 			if !r {
 				if err != nil {
-					log(f1.Name() + " " + f2.Name() + " " + err.Error())
+					logError(err.Error())
 				}
 			} else {
 				if f1.ModTime().Before(f2.ModTime()) {
-					log(f2.Name() + " duplicate removed")
+					log("Duplicate removed", f2.Name())
 					os.Remove("./"+Folder+"/"+f1.Name())
 				} else {
-					log(f1.Name() + " duplicate removed")
+					log("Duplicate removed", f1.Name())
 					os.Remove("./"+Folder+"/"+f2.Name())
 				}
 			}
@@ -94,10 +90,10 @@ func download(filename string, url string, Folder string)error{
 	Client := &http.Client{}
 	resp, errhttp := Client.Get(url)
 	out, errf := os.Create(filename)
-	defer out.Close()
-	defer resp.Body.Close()
 	if errhttp==nil && errf==nil{
 		_, err := io.Copy(out, resp.Body)
+		out.Close()
+		resp.Body.Close()
 		if err==nil{
 			checkDuplicates(filename, Folder)
 			return nil
@@ -110,30 +106,36 @@ func download(filename string, url string, Folder string)error{
 		case errhttp != nil && errf != nil:
 			return errors.New(errhttp.Error() + " " + errf.Error())
 		case errhttp != nil:
+			out.Close()
 			return errhttp
 		case errf != nil:
+			resp.Body.Close()
 			return errf
 		}
 		return errors.New("ukn")
 	}
 }
-func download_loop(dl chan dl_struct){
+func download_loop(dl chan dl_struct, Config * Config){
 	debug.SetGCPercent(500)
 	runtime.LockOSThread()
 	var err error
 	var file dl_struct
 	for {
 		file = <-dl
-		os.MkdirAll("./"+file.Folder+"/", 0777)
 		t := "./"+file.Folder+"/"+file.Filename
 		if strings.Contains(file.Filename,"."){
 			if _, err = os.Stat(t); os.IsNotExist(err) {
-				log(file.Filename + " downloading")
+				log("Downloading", file.Filename)
 				err := download(t, file.Url, file.Folder)
 				if err==nil{
-					log(file.Filename + " downloaded " + format_o(file.Size))
+					log("Downloaded", file.Filename + " " + format_o(file.Size))
 				}else{
-					log(file.Filename + " " + err.Error())
+					file.Tries++
+					if file.Tries < Config.DownloadRetries {
+						dl<-file
+						log("Retry", file.Filename)
+					}
+					logError(file.Filename + " " + err.Error())
 				}
 			}
 		}
@@ -142,7 +144,8 @@ func download_loop(dl chan dl_struct){
 }
 func checkKeywords(config *Config, decoded_thread Thread)string{
 	for v2, k := range config.ParsedKeywords {
-		if strings.Contains(strings.ToUpper(decoded_thread.Posts[0].Sub), strings.ToUpper(v2)) || strings.Contains(strings.ToUpper(decoded_thread.Posts[0].Com), strings.ToUpper(v2)){
+		a := strings.ToUpper(v2)
+		if strings.Contains(strings.ToUpper(decoded_thread.Posts[0].Sub), a) || strings.Contains(strings.ToUpper(decoded_thread.Posts[0].Com), a){
 			return k
 		}
 	}
@@ -153,23 +156,20 @@ func doThread(wg *sync.WaitGroup, threadURL string, dl chan dl_struct, config Co
 	r, err := http.Get(threadURL)
 	if err == io.EOF{
 	}else if err != nil{
-		log(err.Error())
+		logError(err.Error())
 	}else{
 		decoded_thread := Thread{}
 		err = json.NewDecoder(r.Body).Decode(&decoded_thread)
 		if err == io.EOF {
 		}else if err != nil {
-			log(err.Error())
+			logError(err.Error())
 		}else{
 			r.Body.Close()
 			if decoded_thread.Posts != nil {
 				folder := checkKeywords(&config, decoded_thread);
 				if folder != "" {
 					for _, post := range decoded_thread.Posts {
-						if post.Tim != 0 {
-							if post.Time > last_update {
-								println(strconv.Itoa(post.Time))
-							}
+						if post.Time > last_update && post.Tim != 0 {
 							dl<-dl_struct{
 								Filename: strconv.Itoa(post.Tim) + "_" + post.Filename + post.Ext,
 								Folder: folder,
@@ -183,13 +183,22 @@ func doThread(wg *sync.WaitGroup, threadURL string, dl chan dl_struct, config Co
 		}
 	}
 }
+func FullDupeCheck(c Config){
+	for Folder, _ := range c.Keywords {
+		files, _ := ioutil.ReadDir("./"+Folder)
+		for _, f2 := range files{
+			log(Folder, f2.Name())
+			checkDuplicates("./"+Folder+"/"+f2.Name(), Folder)
+		}
+	}
+}
 func main(){
 	debug.SetGCPercent(500)
 	var config Config
 	// download every picture sent in dl chan
 	dl:=make(chan dl_struct,100)
-	go download_loop(dl)
-	go download_loop(dl)
+	go download_loop(dl, &config)
+	go download_loop(dl, &config)
 	//
 	var real_last_update int64 = 0
 	var last_update int = 0
@@ -202,33 +211,37 @@ func main(){
 		// load config
 		ok, err := config.CheckConfig("config.json")
 		if ok {
-			log("New config")
-			println("\tTimeout: " + strconv.Itoa(int(config.Timeout)) + "s")
-			println("\tMinimum time between updates: " + strconv.Itoa(int(config.MinTimeBetweenUpdates)) + "s")
-			fmt.Println("\t", config.Keywords)
+			// go FullDupeCheck(config)
+			println("New config")
+			println("\tTimeout: " + strconv.FormatInt(config.Timeout, 10) + "s")
+			println("\tMinimum time between updates: " + strconv.FormatInt(config.MinTimeBetweenUpdates, 10) + "s")
+			println("\tDownload retries: " + strconv.Itoa(int(config.DownloadRetries)) + " times")
+			print("\t")
+			fmt.Println(config.Keywords)
 		} else if err != nil {
-			log(err.Error())
+			logError(err.Error())
 		}
 		real_last_update=time.Now().Unix()
 		r, err := http.DefaultClient.Do(threads_req)
 		if err==io.EOF{
 		}else if err!=nil{
-			log(err.Error())
+			logError(err.Error())
 		}else{
 			err = json.NewDecoder(r.Body).Decode(&decoded_pages)
 			r.Body.Close()
 			if err==io.EOF{
 			}else if err!=nil{
-				log(err.Error())
+				logError(err.Error())
 			}else{
 				for _,page := range decoded_pages{
 					for _, thread := range page.Threads {
 						if thread.LastModified>last_update {
 							wg.Add(1)
 							doThread(&wg, "https://a.4cdn.org/b/thread/"+strconv.Itoa(thread.No)+".json", dl, config, last_update)
-							if thread.LastModified>new_last_update{
+							/*if thread.LastModified>new_last_update{
 								new_last_update=thread.LastModified
-							}
+							}*/
+							new_last_update = max(new_last_update, thread.LastModified)
 						}
 					}
 				}
@@ -236,16 +249,24 @@ func main(){
 				last_update=new_last_update
 			}
 		}
-		log("Check took " + strconv.Itoa(int(time.Now().Unix() - real_last_update)) + "s")
+		log("Check", "Took: " + strconv.FormatInt((time.Now().Unix() - real_last_update), 10) + "s, Pending download: " + strconv.Itoa(len(dl)))
 		pause(config.MinTimeBetweenUpdates - (time.Now().Unix() - real_last_update))
 	}
+}
+func max(a int, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 type Config struct {
 	LastModified time.Time
 	ParsedKeywords map[string]string
 	//
+	Log *bool `json:"log"`
+	DownloadRetries uint8 `json:"download_retries"`
 	MinTimeBetweenUpdates int64 `json:"min_time_between_updates"`
-	Timeout time.Duration `json:"timeout"`
+	Timeout int64 `json:"timeout"`
 	Keywords map[string][]string `json:"keywords"`
 }
 func (config *Config) CheckConfig(file string) (bool, error) {
@@ -264,12 +285,14 @@ func (config *Config) CheckConfig(file string) (bool, error) {
 			return false, err
 		}
 		http.DefaultClient = &http.Client{
-			Timeout : config.Timeout * time.Second,
+			Timeout : time.Duration(config.Timeout) * time.Second,
 		}
 		// TODO(doc): check if this is needed
 		config.ParsedKeywords = nil
 		config.ParsedKeywords = make(map[string]string)
+		//
 		for k,v := range config.Keywords{
+			os.MkdirAll("./"+k+"/", 0777)
 			for _,v2 := range v{
 				config.ParsedKeywords[v2] = k
 			}
@@ -280,12 +303,17 @@ func (config *Config) CheckConfig(file string) (bool, error) {
 		if config.Timeout == 0 {
 			config.Timeout = 10
 		}
+		if config.Log == nil {
+			*config.Log = true
+		}
+		doLog = *config.Log
 		config.LastModified = t.ModTime()
 		return true, nil
 	}
 	return false, nil
 }
 type dl_struct struct{
+	Tries uint8
 	Filename string
 	Folder string
 	Url string
