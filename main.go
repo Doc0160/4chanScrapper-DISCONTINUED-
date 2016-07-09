@@ -153,17 +153,13 @@ func checkKeywords(config *Config, decoded_thread Thread)string{
 }
 func doThread(wg *sync.WaitGroup, threadURL string, dl chan dl_struct, config Config, last_update int){
 	defer wg.Done()
+	// println(threadURL)
+	threadURL = "https://a.4cdn.org/b/thread/" + threadURL + ".json"
 	r, err := http.Get(threadURL)
-	if err == io.EOF{
-	}else if err != nil{
-		logError(err.Error())
-	}else{
+	if err == nil || err == io.EOF {
 		decoded_thread := Thread{}
 		err = json.NewDecoder(r.Body).Decode(&decoded_thread)
-		if err == io.EOF {
-		}else if err != nil {
-			logError(err.Error())
-		}else{
+		if err == nil || err == io.EOF {
 			r.Body.Close()
 			if decoded_thread.Posts != nil {
 				folder := checkKeywords(&config, decoded_thread);
@@ -180,7 +176,11 @@ func doThread(wg *sync.WaitGroup, threadURL string, dl chan dl_struct, config Co
 					}
 				}
 			}
+		} else {
+			logError(err.Error())
 		}
+	} else {
+		logError(err.Error())
 	}
 }
 func FullDupeCheck(c Config){
@@ -237,10 +237,7 @@ func main(){
 					for _, thread := range page.Threads {
 						if thread.LastModified>last_update {
 							wg.Add(1)
-							doThread(&wg, "https://a.4cdn.org/b/thread/"+strconv.Itoa(thread.No)+".json", dl, config, last_update)
-							/*if thread.LastModified>new_last_update{
-								new_last_update=thread.LastModified
-							}*/
+							go doThread(&wg, strconv.Itoa(thread.No), dl, config, last_update)
 							new_last_update = max(new_last_update, thread.LastModified)
 						}
 					}
