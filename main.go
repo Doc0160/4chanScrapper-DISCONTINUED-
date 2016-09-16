@@ -72,14 +72,14 @@ func checkDuplicates(t string, Folder string){
 			r, err := isSameFile(f1, f2, Folder)
 			if !r {
 				if err != nil {
-					logError(err.Error())
+					println("ERROR : " + err.Error())
 				}
 			} else {
 				if f1.ModTime().Before(f2.ModTime()) {
-					log("Duplicate removed", f2.Name())
+					println("Duplicate removed", f2.Name())
 					os.Remove("./"+Folder+"/"+f1.Name())
 				} else {
-					log("Duplicate removed", f1.Name())
+					println("Duplicate removed", f1.Name())
 					os.Remove("./"+Folder+"/"+f2.Name())
 				}
 			}
@@ -125,17 +125,17 @@ func download_loop(dl chan dl_struct, Config * Config){
 		t := "./"+file.Folder+"/"+file.Filename
 		if strings.Contains(file.Filename,"."){
 			if _, err = os.Stat(t); os.IsNotExist(err) {
-				log("Downloading", file.Filename)
+				println("Downloading", file.Filename)
 				err := download(t, file.Url, file.Folder)
 				if err==nil{
-					log("Downloaded", file.Filename + " " + format_o(file.Size))
+					println("Downloaded", file.Filename + " " + format_o(file.Size))
 				}else{
 					file.Tries++
 					if file.Tries < Config.DownloadRetries {
 						dl<-file
-						log("Retry", file.Filename)
+						println("Retry", file.Filename)
 					}
-					logError(file.Filename + " " + err.Error())
+					println("ERROR : " + file.Filename + " " + err.Error())
 				}
 			}
 		}
@@ -153,41 +153,35 @@ func checkKeywords(config *Config, decoded_thread Thread)string{
 }
 func doThread(wg *sync.WaitGroup, threadURL string, dl chan dl_struct, config Config, last_update int){
 	defer wg.Done()
-	// println(threadURL)
-	threadURL = "https://a.4cdn.org/b/thread/" + threadURL + ".json"
-	r, err := http.Get(threadURL)
+	/*threadURL = "https://a.4cdn.org/b/thread/" + threadURL + ".json"
+	r, err := http.Get(threadURL)*/
+	decoded_thread := Thread{}
+	err := decoded_thread.Load(threadURL)
 	if err == nil || err == io.EOF {
-		decoded_thread := Thread{}
-		err = json.NewDecoder(r.Body).Decode(&decoded_thread)
-		if err == nil || err == io.EOF {
-			r.Body.Close()
-			if decoded_thread.Posts != nil {
-				folder := checkKeywords(&config, decoded_thread);
-				if folder != "" {
-					for _, post := range decoded_thread.Posts {
-						if post.Time > last_update && post.Tim != 0 {
-							dl<-dl_struct{
-								Filename: strconv.Itoa(post.Tim) + "_" + post.Filename + post.Ext,
-								Folder: folder,
-								Url: "https://i.4cdn.org/b/" + strconv.Itoa(post.Tim) + post.Ext, 
-								Size: post.Fsize,
-							}
+		if decoded_thread.Posts != nil {
+			folder := checkKeywords(&config, decoded_thread);
+			if folder != "" {
+				for _, post := range decoded_thread.Posts {
+					if post.Time > last_update && post.Tim != 0 {
+						dl<-dl_struct{
+							Filename: strconv.Itoa(post.Tim) + "_" + post.Filename + post.Ext,
+							Folder: folder,
+							Url: "https://i.4cdn.org/b/" + strconv.Itoa(post.Tim) + post.Ext, 
+							Size: post.Fsize,
 						}
 					}
 				}
 			}
-		} else {
-			logError(err.Error())
 		}
 	} else {
-		logError(err.Error())
+		println("ERROR : " + err.Error())
 	}
 }
 func FullDupeCheck(c Config){
 	for Folder, _ := range c.Keywords {
 		files, _ := ioutil.ReadDir("./"+Folder)
 		for _, f2 := range files{
-			log(Folder, f2.Name())
+			println(Folder, f2.Name())
 			checkDuplicates("./"+Folder+"/"+f2.Name(), Folder)
 		}
 	}
@@ -201,10 +195,8 @@ func main(){
 	go download_loop(dl, &config)
 	//
 	var real_last_update int64 = 0
-	var last_update int = 0
-	var new_last_update int = 0
+	var last_updates map[int]int = make(map[int]int)
 	var decoded_pages Pages
-	threads_req, _ := http.NewRequest("GET", "https://a.4cdn.org/b/threads.json", nil)
 	var wg sync.WaitGroup
 	//
 	for {
@@ -219,34 +211,29 @@ func main(){
 			print("\t")
 			fmt.Println(config.Keywords)
 		} else if err != nil {
-			logError(err.Error())
+			println("ERROR : " + err.Error())
 		}
 		real_last_update=time.Now().Unix()
-		r, err := http.DefaultClient.Do(threads_req)
+		err = decoded_pages.Load()
+		var neww = 0
 		if err==io.EOF{
+			println("ERROR : " + err.Error())
 		}else if err!=nil{
-			logError(err.Error())
+			println("ERROR : " + err.Error())
 		}else{
-			err = json.NewDecoder(r.Body).Decode(&decoded_pages)
-			r.Body.Close()
-			if err==io.EOF{
-			}else if err!=nil{
-				logError(err.Error())
-			}else{
-				for _,page := range decoded_pages{
-					for _, thread := range page.Threads {
-						if thread.LastModified>last_update {
-							wg.Add(1)
-							go doThread(&wg, strconv.Itoa(thread.No), dl, config, last_update)
-							new_last_update = max(new_last_update, thread.LastModified)
-						}
+			for _,page := range decoded_pages{
+				for _, thread := range page.Threads {
+					if last_updates[thread.No]<thread.LastModified {
+						wg.Add(1)
+						go doThread(&wg, strconv.Itoa(thread.No), dl, config, last_updates[thread.No])
+						last_updates[thread.No] = thread.LastModified
+						neww++
 					}
 				}
-				wg.Wait()
-				last_update=new_last_update
 			}
+			wg.Wait()
 		}
-		log("Check", "Took: " + strconv.FormatInt((time.Now().Unix() - real_last_update), 10) + "s, Pending download: " + strconv.Itoa(len(dl)))
+		println("Check", "Took: " + strconv.FormatInt((time.Now().Unix() - real_last_update), 10) + "s for " + strconv.Itoa(neww) + " updates, Pending download: " + strconv.Itoa(len(dl)))
 		pause(config.MinTimeBetweenUpdates - (time.Now().Unix() - real_last_update))
 	}
 }
@@ -303,7 +290,6 @@ func (config *Config) CheckConfig(file string) (bool, error) {
 		if config.Log == nil {
 			*config.Log = true
 		}
-		doLog = *config.Log
 		config.LastModified = t.ModTime()
 		return true, nil
 	}
@@ -331,26 +317,4 @@ func format_o(i int)string {
 		return strconv.Itoa(i/1024)+"ko"
 	}
 	return strconv.Itoa(i)+"o"
-}
-// https://github.com/4chan/4chan-API
-type Pages []struct {
-	Page int `json:"page"`
-	Threads []struct {
-		No int `json:"no"`
-		LastModified int `json:"last_modified"`
-	} `json:"threads"`
-}
-type Thread struct{
-	Posts []struct{
-		No int `json:"no"`
-		Time int `json:"time"`
-		Name string `json:"name"`
-		Sub string `json:"sub"`
-		Com string `json:"com"`
-		Filename string `json:"filename"`
-		Tim int `json:"tim"`
-		Ext string `json:"ext"`
-		Fsize int `json:"fsize"`
-		MD5 string `json:"md5"`
-	} `json:"posts"`
 }

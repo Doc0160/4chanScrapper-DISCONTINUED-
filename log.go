@@ -1,5 +1,5 @@
 package main
-import(
+/*import(
 	"time"
 	"os"
 	"strconv"
@@ -8,11 +8,12 @@ var debugFilename = "out"
 var debugFile *os.File = nil
 var doLog = true
 func log(a string, t string){
-	f := "[" + strconv.FormatInt(time.Now().UnixNano(), 10) + "] [" + a + "] " + t + "\n"
+	f := "\x1b[32m[" + strconv.FormatInt(time.Now().UnixNano(), 10) + "] \x1b[33m[" + a + "] \x1b[36m" + t + "\x1b[0m\n"
 	if doLog {
 		logFile()
 		if debugFile != nil {
-			debugFile.WriteString(f)
+			f2 := "[" + strconv.FormatInt(time.Now().UnixNano(), 10) + "] [" + a + "] " + t + "\n"
+			debugFile.WriteString(f2)
 		}
 	}else{
 		debugFile.Close()
@@ -34,4 +35,4 @@ func logFile(){
 			debugFile = nil
 		}
 	}
-}
+}*/
