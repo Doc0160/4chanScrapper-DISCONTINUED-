@@ -12,7 +12,6 @@ import(
 	"strconv"
 	"io/ioutil"
 	"net/http"
-	"encoding/json"
 	"strings"
 	"time"
 	"os"
@@ -22,20 +21,25 @@ import(
 	"sync"
 	"regexp"
     "runtime/debug"
+    "compress/gzip"
 )
 
 func fileContentsComparison(a, b io.Reader) (bool, error) {
 	bufferSize := os.Getpagesize()
 	ba := make([]byte, bufferSize)
 	bb := make([]byte, bufferSize)
-	for {
-		la, erra := a.Read(ba)
+
+    for {
+
+        la, erra := a.Read(ba)
 		lb, errb := b.Read(bb)
-		if la > 0 || lb > 0 {
+
+        if la > 0 || lb > 0 {
 			if !bytes.Equal(ba, bb) {
 				return false, nil
 			}
 		}
+
 		switch {
 		case erra == io.EOF && errb == io.EOF:
 			return true, nil
@@ -46,6 +50,7 @@ func fileContentsComparison(a, b io.Reader) (bool, error) {
 		case errb != nil:
 			return false, errb
 		}
+
 	}
 }
 
@@ -53,8 +58,10 @@ func isSameFile(f1 os.FileInfo, f2 os.FileInfo, Folder string) (bool, error) {
 	if f1.Size()!=f2.Size(){
 		return false, nil
 	}
-	a, erra := os.Open("./"+Folder+"/"+f1.Name())
+
+    a, erra := os.Open("./"+Folder+"/"+f1.Name())
 	b, errb := os.Open("./"+Folder+"/"+f2.Name())
+
 	switch {
 	case erra == io.EOF && errb == io.EOF:
 		a.Close()
@@ -69,7 +76,8 @@ func isSameFile(f1 os.FileInfo, f2 os.FileInfo, Folder string) (bool, error) {
 		a.Close()
 		return false, errb
 	}
-	r, err := fileContentsComparison(a, b)
+
+    r, err := fileContentsComparison(a, b)
 	a.Close()
 	b.Close()
 	return r, err
@@ -99,13 +107,44 @@ func checkDuplicates(t string, Folder string){
 }
 
 func download(filename string, url string, Folder string)error{
-	Client := &http.Client{}
-	resp, errhttp := Client.Get(url)
-	out, errf := os.Create(filename)
-	if errhttp==nil && errf==nil{
-		_, err := io.Copy(out, resp.Body)
-		out.Close()
-		resp.Body.Close()
+    client := http.Client{}
+    req, err := http.NewRequest("GET", url, nil)
+    if err != nil {
+        return err;
+    }
+    req.Header.Add("Accept-Encoding", "gzip")
+    r, err := client.Do(req)
+    if err != nil{
+        return err
+    }
+    defer r.Body.Close()
+    out, err := os.Create(filename)
+    if err != nil {
+        return err
+    }
+    defer out.Close()
+    if len(r.Header["Content-Encoding"]) > 0 {
+        if r.Header["Content-Encoding"][0] == "gzip" {
+            g, err := gzip.NewReader(r.Body)
+            if err != nil {
+                return err
+            }
+            defer g.Close()
+            _, err = io.Copy(out, g)
+            out.Close()
+            r.Body.Close()
+            if err==nil{
+                checkDuplicates(filename, Folder)
+                return nil
+            }else{
+                os.Remove(filename)
+                return err
+            }
+        } else {
+            panic(r.Header["Content-Encoding"])
+        }
+    }else {
+        _, err := io.Copy(out, r.Body)
 		if err==nil{
 			checkDuplicates(filename, Folder)
 			return nil
@@ -113,19 +152,8 @@ func download(filename string, url string, Folder string)error{
 			os.Remove(filename)
 			return err
 		}
-	}else{
-		switch {
-		case errhttp != nil && errf != nil:
-			return errors.New(errhttp.Error() + " " + errf.Error())
-		case errhttp != nil:
-			out.Close()
-			return errhttp
-		case errf != nil:
-			resp.Body.Close()
-			return errf
-		}
-		return errors.New("ukn")
-	}
+    }
+    return nil
 }
 
 func download_loop(dl chan dl_struct, Config * Config){
@@ -165,8 +193,6 @@ func checkKeywords(config *Config, decoded_thread Thread)string{
 
 func doThread(wg *sync.WaitGroup, threadURL string, dl chan dl_struct, config Config, last_update int){
 	defer wg.Done()
-	/*threadURL = "https://a.4cdn.org/b/thread/" + threadURL + ".json"
-	r, err := http.Get(threadURL)*/
 	decoded_thread := Thread{}
 	err := decoded_thread.Load(threadURL)
 	if err == nil || err == io.EOF {
@@ -398,77 +424,3 @@ func Accents(s string) string {
 	}
 	return b.String()
 }
-
-// https://github.com/4chan/4chan-API
-type Pages []struct {
-	Page int `json:"page"`
-	Threads []struct {
-		No int `json:"no"`
-		LastModified int `json:"last_modified"`
-	} `json:"threads"`
-}
-
-type Post struct {
-	No int `json:"no"`
-	Now string `json:"now"`
-	Name string `json:"name"`
-	Sub string `json:"sub"`
-	Com string `json:"com"`
-	Filename string `json:"filename,omitempty"`
-	Ext string `json:"ext,omitempty"`
-	W int `json:"w,omitempty"`
-	H int `json:"h,omitempty"`
-	TnW int `json:"tn_w,omitempty"`
-	TnH int `json:"tn_h,omitempty"`
-	Tim int `json:"tim,omitempty"`
-	Time int `json:"time"`
-	Md5 string `json:"md5,omitempty"`
-	Fsize int `json:"fsize,omitempty"`
-	Resto int `json:"resto"`
-	Bumplimit int `json:"bumplimit,omitempty"`
-	Imagelimit int `json:"imagelimit,omitempty"`
-	SemanticURL string `json:"semantic_url,omitempty"`
-	Replies int `json:"replies,omitempty"`
-	Images int `json:"images,omitempty"`
-	UniqueIps int `json:"unique_ips,omitempty"`
-}
-
-type Thread struct {
-	Posts []Post `json:"posts"`
-}
-
-func (t*Thread)Load(threadNo string) error{
-	r, err := http.Get("https://a.4cdn.org/b/thread/" + threadNo + ".json")
-	if err != nil{
-		return err
-	}else{
-		err = json.NewDecoder(r.Body).Decode(t)
-		r.Body.Close()
-		return err
-	}
-}
-
-func (p*Pages)Load() error{
-	r, err := http.Get("https://a.4cdn.org/b/threads.json")
-	if err != nil{
-		return err
-	}else{
-		err = json.NewDecoder(r.Body).Decode(p)
-		r.Body.Close()
-		return err
-	}
-}
-
-func (p*Post)GetFileUrl() string {
-	return "https://i.4cdn.org/b/" + p.GetFilename()
-}
-
-func (p*Post)GetFilename() string {
-	return strconv.Itoa(p.Tim) + p.Ext
-}
-
-func (p*Post)GetDownloadFilename() string {
-	return strconv.Itoa(p.Tim) + "_" + CleanName(p.Filename) + p.Ext
-}
-
-

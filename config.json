@@ -1,6 +1,6 @@
 {
 	"log" : false,
-	"min_time_between_updates" : 5,
+	"min_time_between_updates" : 20,
 	"timeout" : 15,
 	"download_retries" : 10,
 	"keywords":{
