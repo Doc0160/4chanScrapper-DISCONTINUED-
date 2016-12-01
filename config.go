@@ -1,10 +1,19 @@
+/* ========================================================================
+   $File: $
+   $Date: $
+   $Revision: $
+   $Creator: Tristan Magniez $
+   ======================================================================== */
+
 package main
-/*import(
-	"time"
-	"encoding/json"
-	"os"
-	"net/http"
+
+import (
+    "time"
+    "os"
+    "encoding/json"
+    "net/http"
 )
+
 type Config struct {
 	LastModified time.Time
 	ParsedKeywords map[string]string
@@ -15,11 +24,13 @@ type Config struct {
 	Timeout int64 `json:"timeout"`
 	Keywords map[string][]string `json:"keywords"`
 }
+
 func (config *Config) CheckConfig(file string) (bool, error) {
 	t, err := os.Stat(file)
 	if err != nil {
 		return false, err
 	}
+
 	if t.ModTime().After(config.LastModified) {
 		fc, err := os.Open(file)
 		if err != nil {
@@ -33,6 +44,7 @@ func (config *Config) CheckConfig(file string) (bool, error) {
 		http.DefaultClient = &http.Client{
 			Timeout : time.Duration(config.Timeout) * time.Second,
 		}
+
 		// TODO(doc): check if this is needed
 		config.ParsedKeywords = nil
 		config.ParsedKeywords = make(map[string]string)
@@ -52,9 +64,8 @@ func (config *Config) CheckConfig(file string) (bool, error) {
 		if config.Log == nil {
 			*config.Log = true
 		}
-		doLog = *config.Log
 		config.LastModified = t.ModTime()
 		return true, nil
 	}
 	return false, nil
-}*/
+}
