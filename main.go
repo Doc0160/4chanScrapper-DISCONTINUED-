@@ -8,7 +8,6 @@
 package main
 
 import(
-	"fmt"
 	"strconv"
 	"io/ioutil"
 	"net/http"
@@ -17,94 +16,15 @@ import(
 	"os"
 	"io"
 	"bytes"
-	"errors"
-	"sync"
+	//"sync"
 	"regexp"
     "runtime/debug"
     "compress/gzip"
+    "log"
 )
 
-func fileContentsComparison(a, b io.Reader) (bool, error) {
-	bufferSize := os.Getpagesize()
-	ba := make([]byte, bufferSize)
-	bb := make([]byte, bufferSize)
-
-    for {
-
-        la, erra := a.Read(ba)
-		lb, errb := b.Read(bb)
-
-        if la > 0 || lb > 0 {
-			if !bytes.Equal(ba, bb) {
-				return false, nil
-			}
-		}
-
-		switch {
-		case erra == io.EOF && errb == io.EOF:
-			return true, nil
-		case erra != nil && errb != nil:
-			return false, errors.New(erra.Error() + " " + errb.Error())
-		case erra != nil:
-			return false, erra
-		case errb != nil:
-			return false, errb
-		}
-
-	}
-}
-
-func isSameFile(f1 os.FileInfo, f2 os.FileInfo, Folder string) (bool, error) {
-	if f1.Size()!=f2.Size(){
-		return false, nil
-	}
-
-    a, erra := os.Open("./"+Folder+"/"+f1.Name())
-	b, errb := os.Open("./"+Folder+"/"+f2.Name())
-
-	switch {
-	case erra == io.EOF && errb == io.EOF:
-		a.Close()
-		b.Close()
-		return true, nil
-	case erra != nil && errb != nil:
-		return false, errors.New(erra.Error() + " " + errb.Error())
-	case erra != nil:
-		b.Close()
-		return false, erra
-	case errb != nil:
-		a.Close()
-		return false, errb
-	}
-
-    r, err := fileContentsComparison(a, b)
-	a.Close()
-	b.Close()
-	return r, err
-}
-
-func checkDuplicates(t string, Folder string){
-	f1,_ := os.Stat(t)
-	files, _ := ioutil.ReadDir("./"+Folder)
-	for _, f2 := range files{
-		if f1.Name() != f2.Name() {
-			r, err := isSameFile(f1, f2, Folder)
-			if !r {
-				if err != nil {
-					println("ERROR : " + err.Error())
-				}
-			} else {
-				if f1.ModTime().Before(f2.ModTime()) {
-					println("Duplicate removed", f2.Name())
-					os.Remove("./"+Folder+"/"+f1.Name())
-				} else {
-					println("Duplicate removed", f1.Name())
-					os.Remove("./"+Folder+"/"+f2.Name())
-				}
-			}
-		}
-	}
-}
+var _ = log.Println
+var _ = debug.SetGCPercent 
 
 func download(filename string, url string, Folder string)error{
     client := http.Client{}
@@ -155,10 +75,10 @@ func download(filename string, url string, Folder string)error{
     }
     return nil
 }
-
-func download_loop(dl chan dl_struct, Config * Config){
+/*
+func download_loop(dl chan Picture, Config * Config){
 	var err error
-	var file dl_struct
+	var file Picture
 	for {
 		file = <-dl
 		t := "./"+file.Folder+"/"+file.Filename
@@ -174,13 +94,13 @@ func download_loop(dl chan dl_struct, Config * Config){
 						dl<-file
 						println("Retry", file.Filename)
 					}
-					println("ERROR : " + file.Filename + " " + err.Error())
+					log.Println("ERROR : " + file.Filename + " " + err.Error())
 				}
 			}
 		}
 	}
 }
-
+*/
 func checkKeywords(config *Config, decoded_thread Thread)string{
 	for v2, k := range config.ParsedKeywords {
 		a := strings.ToUpper(v2)
@@ -190,8 +110,8 @@ func checkKeywords(config *Config, decoded_thread Thread)string{
 	}
 	return ""
 }
-
-func doThread(wg *sync.WaitGroup, threadURL string, dl chan dl_struct, config Config, last_update int){
+/*
+func doThread(wg *sync.WaitGroup, threadURL string, dl chan Picture, config Config, last_update int){
 	defer wg.Done()
 	decoded_thread := Thread{}
 	err := decoded_thread.Load(threadURL)
@@ -201,10 +121,10 @@ func doThread(wg *sync.WaitGroup, threadURL string, dl chan dl_struct, config Co
 			if folder != "" {
 				for _, post := range decoded_thread.Posts {
 					if post.Time > last_update && post.Tim != 0 {
-						dl<-dl_struct{
+						dl<-Picture{
 							Filename: CleanName(strconv.Itoa(post.Tim) + "_" + post.Filename) + post.Ext,
 							Folder: folder,
-							Url: "https://i.4cdn.org/b/" + strconv.Itoa(post.Tim) + post.Ext, 
+							Url: post.GetFileUrl(), 
 							Size: post.Fsize,
 						}
 					}
@@ -215,33 +135,33 @@ func doThread(wg *sync.WaitGroup, threadURL string, dl chan dl_struct, config Co
 		println("ERROR : " + err.Error())
 	}
 }
-
+*/
 func FullDupeCheck(c Config){
 	for Folder, _ := range c.Keywords {
 		files, _ := ioutil.ReadDir("./"+Folder)
 		for _, f2 := range files{
-			println(Folder, f2.Name())
+			//println(Folder, f2.Name())
 			checkDuplicates("./"+Folder+"/"+f2.Name(), Folder)
 		}
 	}
 }
 
+var config Config
+var last_updates map[int]int = make(map[int]int)
+//var dl = make(chan Picture, 100)
 func main(){
-	debug.SetGCPercent(500)
-	var config Config
+	//debug.SetGCPercent(500)
+    go bot.t()
 
 	// download every picture sent in dl chan
-	dl:=make(chan dl_struct,100)
-	go download_loop(dl, &config)
-	go download_loop(dl, &config)
+	//dl:=make(chan dl_struct,100)
+	//go download_loop(dl, &config)
+	//go download_loop(dl, &config)
 
     //
 	var real_last_update int64 = 0
-	var last_updates map[int]int = make(map[int]int)
 	var decoded_pages Pages
-	var wg sync.WaitGroup
 
-    //
 	for {
 		// load config
 		ok, err := config.CheckConfig("config.json")
@@ -251,69 +171,30 @@ func main(){
 			println("\tTimeout: " + strconv.FormatInt(config.Timeout, 10) + "s")
 			println("\tMinimum time between updates: " + strconv.FormatInt(config.MinTimeBetweenUpdates, 10) + "s")
 			println("\tDownload retries: " + strconv.Itoa(int(config.DownloadRetries)) + " times")
-			print("\t")
-			fmt.Println(config.Keywords)
+			log.Println(config.Keywords)
 		} else if err != nil {
 			println("ERROR : " + err.Error())
 		}
 		real_last_update=time.Now().Unix()
 		err = decoded_pages.Load()
 		var neww = 0
-		if err==io.EOF{
-			println("ERROR : " + err.Error())
-		}else if err!=nil{
+		if err!=nil{
 			println("ERROR : " + err.Error())
 		}else{
-
 			for _,page := range decoded_pages{
 				for _, thread := range page.Threads {
 					if last_updates[thread.No]<thread.LastModified {
-						wg.Add(1)
-						go doThread(&wg, strconv.Itoa(thread.No), dl, config, last_updates[thread.No])
-						last_updates[thread.No] = thread.LastModified
+                        //bot.tickets.Wait(10)
+                        bot.tasks <- thread
 						neww++
 					}
 				}
 			}
-			wg.Wait()
         }
 
-        println("Check", "Took: " + strconv.FormatInt((time.Now().Unix() - real_last_update), 10) + "s for " + strconv.Itoa(neww) + " updates, Pending download: " + strconv.Itoa(len(dl)))
+        println("Check", "Took: " + strconv.FormatInt((time.Now().Unix() - real_last_update), 10) + "s for " + strconv.Itoa(neww) + " updates, Pending download: " + strconv.Itoa(len(bot.tasks)))
 		pause(config.MinTimeBetweenUpdates - (time.Now().Unix() - real_last_update))
 	}
-}
-
-func max(a int, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-type dl_struct struct{
-	Tries uint8
-	Filename string
-	Folder string
-	Url string
-	Size int
-}
-
-func pause(durationS int64) {
-	time.Sleep(time.Duration(durationS) * time.Second)
-}
-
-func format_o(i int)string {
-	switch{
-		case i>1024*1024*1024*1024:
-		return strconv.Itoa(i/(1024*1024*1024*1024))+"To"
-		case i>1024*1024*1024:
-		return strconv.Itoa(i/(1024*1024*1024))+"Go"
-		case i>1024*1024:
-		return strconv.Itoa(i/(1024*1024))+"Mo"
-		case i>1024:
-		return strconv.Itoa(i/1024)+"ko"
-	}
-	return strconv.Itoa(i)+"o"
 }
 
 var baseNameSeparators = regexp.MustCompile(`[./]`)
@@ -424,3 +305,4 @@ func Accents(s string) string {
 	}
 	return b.String()
 }
+

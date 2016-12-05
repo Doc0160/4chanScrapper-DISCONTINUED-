@@ -48,6 +48,7 @@ func (config *Config) CheckConfig(file string) (bool, error) {
 		// TODO(doc): check if this is needed
 		config.ParsedKeywords = nil
 		config.ParsedKeywords = make(map[string]string)
+
 		//
 		for k,v := range config.Keywords{
 			os.MkdirAll("./"+k+"/", 0777)
